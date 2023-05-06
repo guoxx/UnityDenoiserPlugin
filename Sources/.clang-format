@@ -4,6 +4,6 @@ IndentWidth: 4
 Language: Cpp
 SpacesInParentheses: True
 SpacesInSquareBrackets: True
-BreakBeforeBraces: Linux
+BreakBeforeBraces: Allman
 AccessModifierOffset: -4
 ColumnLimit: 0

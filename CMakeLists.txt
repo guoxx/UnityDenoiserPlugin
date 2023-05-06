@@ -15,14 +15,15 @@ file(GLOB SOURCE_FILES Sources/*.cpp)
 
 add_library(${target_name} SHARED ${SOURCE_FILES})
 
+# Setup NVRHI
 set(NVRHI_INSTALL OFF)
 set(NVRHI_WITH_SHADER_COMPILER OFF)
 set(NVRHI_WITH_VULKAN OFF)
 set(NVRHI_WITH_DX11 OFF)
 set(NVRHI_WITH_DX12 ON)
 add_subdirectory(Externals/NVRHI)
-
 add_dependencies(${target_name} nvrhi nvrhi_d3d12)
+target_link_libraries(${target_name} nvrhi nvrhi_d3d12)
 
 # Add include directories
 target_include_directories(${target_name} PRIVATE
@@ -36,7 +37,7 @@ target_include_directories(${target_name} PRIVATE
 target_precompile_headers(${target_name} PRIVATE Sources/pch.h)
 
 # Link against the necessary OptiX libraries
-target_link_libraries(${target_name} ${OptiX_LIBRARIES} ${CUDA_LIBRARIES} nvrhi nvrhi_d3d12)
+target_link_libraries(${target_name} ${OptiX_LIBRARIES} ${CUDA_LIBRARIES})
 
 # Build HLSL shaders
 file(GLOB HLSL_SHADER_FILES Sources/Shaders/*.cs.hlsl)
@@ -56,3 +57,10 @@ foreach(FILE ${HLSL_SHADER_FILES})
                      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                      VERBATIM)
 endforeach(FILE)
+
+# OIDN
+add_subdirectory(Externals/oidn)
+target_include_directories(${target_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Externals/oidn)
+add_dependencies(${target_name} OIDN_UNet)
+target_link_libraries(${target_name} OIDN_UNet)

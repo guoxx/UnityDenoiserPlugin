@@ -1,14 +1,9 @@
 #include "OptixDenoiseContext.h"
-#include "Exception.h"
 
 #include <optix.h>
 #include <optix_denoiser_tiling.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
-
-#include <nvrhi/nvrhi.h>
-#include <nvrhi/d3d12.h>
-#include <nvrhi/validation.h>
 
 #include <cstdlib>
 #include <fstream>
@@ -17,314 +12,51 @@
 #include <mutex>
 #include <sstream>
 
-#include "Shaders/CopyContentBufferToTexture.h"
-#include "Shaders/CopyContentTextureToBuffer.h"
+#include "Exception.h"
+#include "Utils.h"
+#include "RHI.h"
 
 
-extern IUnityGraphicsD3D12v7* UnityRenderAPI_D3D12();
-extern IUnityLog* UnityLogger();
-#define UNITY_LOG_(MSG_) UNITY_LOG(UnityLogger(), MSG_)
-#define UNITY_LOG_WARNING_(MSG_) UNITY_LOG_WARNING(UnityLogger(), MSG_)
-#define UNITY_LOG_ERROR_(MSG_) UNITY_LOG_ERROR(UnityLogger(), MSG_)
-
-
-namespace UnityDenoisePlugin
+namespace UnityDenoiserPlugin
 {
-
-// Utility functions
-static nvrhi::Format OptixPixelFormatToNVRHIFormat( OptixPixelFormat format, uint32_t& bytesPerPixel )
-{
-    switch ( format ) {
-        case OPTIX_PIXEL_FORMAT_UCHAR4:
-            bytesPerPixel = sizeof( uint8_t ) * 4;
-            return nvrhi::Format::RGBA8_UNORM;
-
-        case OPTIX_PIXEL_FORMAT_HALF2:
-            bytesPerPixel = sizeof( uint16_t ) * 2;
-            return nvrhi::Format::RG16_FLOAT;
-
-        case OPTIX_PIXEL_FORMAT_HALF4:
-            bytesPerPixel = sizeof( uint16_t ) * 4;
-            return nvrhi::Format::RGBA16_FLOAT;
-
-        case OPTIX_PIXEL_FORMAT_FLOAT2:
-            bytesPerPixel = sizeof( float ) * 2;
-            return nvrhi::Format::RG32_FLOAT;
-
-        case OPTIX_PIXEL_FORMAT_FLOAT3:
-            bytesPerPixel = sizeof( float ) * 3;
-            return nvrhi::Format::RGB32_FLOAT;
-
-        case OPTIX_PIXEL_FORMAT_FLOAT4:
-            bytesPerPixel = sizeof( float ) * 4;
-            return nvrhi::Format::RGBA32_FLOAT;
-
-        default:
-            bytesPerPixel = 0;
-            return nvrhi::Format::UNKNOWN;
-    }
-}
-
-static nvrhi::Format DXGIFormatToNVRHIFormat( DXGI_FORMAT format )
-{
-    switch ( format ) {
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-        case DXGI_FORMAT_R8G8B8A8_UNORM:
-            return nvrhi::Format::RGBA8_UNORM;
-
-        case DXGI_FORMAT_R16G16_TYPELESS:
-        case DXGI_FORMAT_R16G16_FLOAT:
-            return nvrhi::Format::RG16_FLOAT;
-
-        case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-        case DXGI_FORMAT_R16G16B16A16_FLOAT:
-            return nvrhi::Format::RGBA16_FLOAT;
-
-        case DXGI_FORMAT_R32G32_TYPELESS:
-        case DXGI_FORMAT_R32G32_FLOAT:
-            return nvrhi::Format::RG32_FLOAT;
-
-        case DXGI_FORMAT_R32G32B32_TYPELESS:
-        case DXGI_FORMAT_R32G32B32_FLOAT:
-            return nvrhi::Format::RGB32_FLOAT;
-
-        case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-        case DXGI_FORMAT_R32G32B32A32_FLOAT:
-            return nvrhi::Format::RGBA32_FLOAT;
-
-        default:
-            return nvrhi::Format::UNKNOWN;
-    }
-}
-
-uint32_t DivideRoundUp( uint32_t a, uint32_t b )
-{
-    return ( a + b - 1 ) / b;
-}
 
 void LogCallback( uint32_t level, const char* tag, const char* message, void* /*cbdata*/ )
 {
     std::ostringstream oss;
     oss << "[" << std::setw( 2 ) << level << "][" << std::setw( 12 ) << tag << "]: " << message << "\n";
 
-    if ( level == 4 ) {
-        UNITY_LOG_( oss.str().c_str() );
-    } else if ( level == 3 ) {
-        UNITY_LOG_WARNING_( oss.str().c_str() );
-    } else {
-        UNITY_LOG_ERROR_( oss.str().c_str() );
-    }
+    if ( level == 4 )
+        LogMessage( oss.str().c_str() );
+    else if ( level == 3 )
+        LogWarning( oss.str().c_str() );
+    else
+        LogError( oss.str().c_str() );
 }
 
-void SignalExternalSemaphore( cudaExternalSemaphore_t extSem, unsigned long long value, cudaStream_t stream )
+OptixDeviceContext OptixDenoiseContext::s_optixDeviceContext = nullptr;
+
+OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
 {
-    cudaExternalSemaphoreSignalParams params = {};
-    memset( &params, 0, sizeof( params ) );
-    params.params.fence.value = value;
+    // Sanity check
+    SUTIL_ASSERT_MSG( !cfg.guideNormal || cfg.guideAlbedo,
+                      "Currently albedo is required if normal input is given" );
+    SUTIL_ASSERT_MSG( ( cfg.tileWidth == 0 && cfg.tileHeight == 0 ) || ( cfg.tileWidth > 0 && cfg.tileHeight > 0 ),
+                      "tile size must be > 0 for width and height" );
 
-    cudaSignalExternalSemaphoresAsync( &extSem, &params, 1, stream );
-}
+    m_temporalMode = cfg.temporalMode;
+    m_tileWidth = cfg.tileWidth > 0 ? cfg.tileWidth : cfg.imageWidth;
+    m_tileHeight = cfg.tileHeight > 0 ? cfg.tileHeight : cfg.imageHeight;
 
-void WaitExternalSemaphore( cudaExternalSemaphore_t extSem, unsigned long long value, cudaStream_t stream )
-{
-    cudaExternalSemaphoreWaitParams params = {};
-    memset( &params, 0, sizeof( params ) );
-    params.params.fence.value = value;
+    bool kpMode = true;
 
-    cudaWaitExternalSemaphoresAsync( &extSem, &params, 1, stream );
-}
-
-nvrhi::TextureHandle CreateHandleForNativeTexture( nvrhi::DeviceHandle rhiDevice, ID3D12Resource* pTexture )
-{
-    auto d3dTextureDesc = pTexture->GetDesc();
-
-    auto textureDesc = nvrhi::TextureDesc()
-                           .setDimension( nvrhi::TextureDimension::Texture2D )
-                           .setWidth( (uint32_t)( d3dTextureDesc.Width ) )
-                           .setHeight( d3dTextureDesc.Height )
-                           .setFormat( DXGIFormatToNVRHIFormat( d3dTextureDesc.Format ) )
-                           .setIsUAV( d3dTextureDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS );
-    auto textureHandle = rhiDevice->createHandleForNativeTexture( nvrhi::ObjectTypes::D3D12_Resource,
-                                                                  nvrhi::Object( pTexture ),
-                                                                  textureDesc );
-    return textureHandle;
-}
-
-
-class GPUFence
-{
-public:
-    ID3D12Fence* d3dFence = nullptr;
-    cudaExternalSemaphore_t cudaSempaphore = nullptr;
-
-    GPUFence( nvrhi::DeviceHandle rhiDevice )
+    // Initialize D3D resources
     {
-        ID3D12Device* d3d12Device = rhiDevice->getNativeObject( nvrhi::ObjectTypes::D3D12_Device );
-
-        d3d12Device->CreateFence( 0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS( &d3dFence ) );
-
-        HANDLE sharedHandle;
-        d3d12Device->CreateSharedHandle( d3dFence, nullptr, GENERIC_ALL, nullptr, &sharedHandle );
-
-        cudaExternalSemaphoreHandleDesc desc = {};
-        memset( &desc, 0, sizeof( desc ) );
-        desc.type = cudaExternalSemaphoreHandleTypeD3D12Fence;
-        desc.handle.win32.handle = sharedHandle;
-        CUDA_CHECK( cudaImportExternalSemaphore( &cudaSempaphore, &desc ) );
-
-        CloseHandle( sharedHandle );
-    }
-
-    ~GPUFence() noexcept( false )
-    {
-        CUDA_CHECK( cudaDestroyExternalSemaphore( cudaSempaphore ) );
-        d3dFence->Release();
-    }
-};
-
-
-class GPUTexture
-{
-public:
-    OptixImage2D optixImage = {};
-    nvrhi::BufferHandle bufferHandle;
-
-    GPUTexture( nvrhi::DeviceHandle rhiDevice, int width, int height, OptixPixelFormat format )
-    {
-        uint32_t pixelSizeInBytes = 0;
-        nvrhi::Format nvrhiFormat = OptixPixelFormatToNVRHIFormat( format, pixelSizeInBytes );
-
-        const uint64_t totalSizeInBytes = height * width * pixelSizeInBytes;
-
-        bufferHandle = nullptr;
-        {
-            auto bufferDesc = nvrhi::BufferDesc()
-                                  .setByteSize( totalSizeInBytes )
-                                  .setStructStride( pixelSizeInBytes )
-                                  .setFormat( nvrhiFormat )
-                                  .setCanHaveTypedViews( true )
-                                  .setCanHaveUAVs( true )
-                                  .setInitialState( nvrhi::ResourceStates::Common )
-                                  .setKeepInitialState( true );
-            bufferDesc.sharedResourceFlags = nvrhi::SharedResourceFlags::Shared;
-            bufferHandle = rhiDevice->createBuffer( bufferDesc );
-        }
-
-        cudaExternalMemory_t extMem = NULL;
-        {
-            cudaExternalMemoryHandleDesc memHandleDesc = {};
-            memset( &memHandleDesc, 0, sizeof( memHandleDesc ) );
-            memHandleDesc.type = cudaExternalMemoryHandleTypeD3D12Resource;
-            memHandleDesc.handle.win32.handle = (void*)bufferHandle->getNativeObject( nvrhi::ObjectTypes::SharedHandle );
-            memHandleDesc.size = totalSizeInBytes;
-            memHandleDesc.flags |= cudaExternalMemoryDedicated;
-            CUDA_CHECK( cudaImportExternalMemory( &extMem, &memHandleDesc ) );
-        }
-
-        void* ptr = nullptr;
-        {
-            cudaExternalMemoryBufferDesc memDesc = {};
-            memDesc.offset = 0;
-            memDesc.size = totalSizeInBytes;
-            memDesc.flags = 0;
-            CUDA_CHECK( cudaExternalMemoryGetMappedBuffer( &ptr, extMem, &memDesc ) );
-            CUDA_CHECK( cudaMemset( ptr, 0, totalSizeInBytes ) );
-        }
-
-        optixImage.data = (CUdeviceptr)( ptr );
-        optixImage.width = width;
-        optixImage.height = height;
-        optixImage.pixelStrideInBytes = pixelSizeInBytes;
-        optixImage.rowStrideInBytes = width * pixelSizeInBytes;
-        optixImage.format = format;
-    }
-
-    ~GPUTexture()
-    {
-    }
-};
-
-
-namespace
-{
-    // Static global variables
-    static bool s_initialized = false;
-
-    static nvrhi::DeviceHandle s_nvrhiDevice = nullptr;
-    static nvrhi::CommandListHandle s_nvrhiCommandList = nullptr;
-    static nvrhi::ComputePipelineHandle s_pipelineCopyTextureToBuffer = nullptr;
-    static nvrhi::ComputePipelineHandle s_pipelineCopyBufferToTexture = nullptr;
-
-    static OptixDeviceContext s_optixDeviceContext = nullptr;
-};
-
-static void Initialize_()
-{
-    if (s_initialized) { return; }
-    s_initialized = true;
-
-    // Initialize NVRHI device
-    {
-        nvrhi::d3d12::DeviceDesc deviceDesc = {};
-        deviceDesc.pDevice = UnityRenderAPI_D3D12()->GetDevice();
-        deviceDesc.pGraphicsCommandQueue = UnityRenderAPI_D3D12()->GetCommandQueue();
-        deviceDesc.pComputeCommandQueue = UnityRenderAPI_D3D12()->GetCommandQueue();
-        deviceDesc.pCopyCommandQueue = UnityRenderAPI_D3D12()->GetCommandQueue();
-        s_nvrhiDevice = nvrhi::d3d12::createDevice( deviceDesc );
-
-        #if defined( DEBUG ) || defined( _DEBUG )
-            nvrhi::DeviceHandle nvrhiValidationLayer = nvrhi::validation::createValidationLayer( s_nvrhiDevice );
-            s_nvrhiDevice = nvrhiValidationLayer;
-        #endif
-    }
-
-    // Initialize NVRHI command lsit
-    {
-        s_nvrhiCommandList = s_nvrhiDevice->createCommandList( nvrhi::CommandListParameters{} );
-    }
-
-    // Initialize pipelines
-    {
-        nvrhi::ShaderHandle computeShader = s_nvrhiDevice->createShader(
-            nvrhi::ShaderDesc( nvrhi::ShaderType::Compute ),
-            (const void*)g_CopyContentTextureToBuffer_ByteCode,
-            sizeof( g_CopyContentTextureToBuffer_ByteCode ) );
-
-        auto layoutDesc = nvrhi::BindingLayoutDesc()
-                              .setVisibility( nvrhi::ShaderType::Compute )
-                              .setRegisterSpace( 0 )
-                              .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 0 ) )
-                              .addItem( nvrhi::BindingLayoutItem::TypedBuffer_UAV( 0 ) )
-                              .addItem( nvrhi::BindingLayoutItem::PushConstants( 0, sizeof( uint4 ) ) );
-        auto bindingLayout = s_nvrhiDevice->createBindingLayout( layoutDesc );
-
-        auto pipelineDesc = nvrhi::ComputePipelineDesc()
-                                .setComputeShader( computeShader )
-                                .addBindingLayout( bindingLayout );
-        s_pipelineCopyTextureToBuffer = s_nvrhiDevice->createComputePipeline( pipelineDesc );
-    }
-
-    {
-        nvrhi::ShaderHandle computeShader = s_nvrhiDevice->createShader(
-            nvrhi::ShaderDesc( nvrhi::ShaderType::Compute ),
-            (const void*)g_CopyContentBufferToTexture_ByteCode,
-            sizeof( g_CopyContentBufferToTexture_ByteCode ) );
-
-        auto layoutDesc = nvrhi::BindingLayoutDesc()
-                              .setVisibility( nvrhi::ShaderType::Compute )
-                              .setRegisterSpace( 0 )
-                              .addItem( nvrhi::BindingLayoutItem::Texture_UAV( 0 ) )
-                              .addItem( nvrhi::BindingLayoutItem::TypedBuffer_SRV( 0 ) )
-                              .addItem( nvrhi::BindingLayoutItem::PushConstants( 0, sizeof( uint4 ) ) );
-        auto bindingLayout = s_nvrhiDevice->createBindingLayout( layoutDesc );
-
-        auto pipelineDesc = nvrhi::ComputePipelineDesc()
-                                .setComputeShader( computeShader )
-                                .addBindingLayout( bindingLayout );
-        s_pipelineCopyBufferToTexture = s_nvrhiDevice->createComputePipeline( pipelineDesc );
+        m_cudaWaitFence = std::make_shared<GPUFence>( RHI::GetD3D12Device() );
+        m_d3dWaitFence = std::make_shared<GPUFence>( RHI::GetD3D12Device() );
     }
 
     // Initialize OptiX device context
+    if (s_optixDeviceContext == nullptr)
     {
         // Initialize CUDA
         CUDA_CHECK( cudaFree( nullptr ) );
@@ -341,123 +73,6 @@ static void Initialize_()
 #endif
         // zero means take the current context
         OPTIX_CHECK( optixDeviceContextCreate( nullptr, &options, &s_optixDeviceContext ) );
-    }
-}
-
-static void Finalize_()
-{
-    if (!s_initialized) { return; }
-    s_initialized = false;
-
-    s_pipelineCopyBufferToTexture = nullptr;
-    s_pipelineCopyTextureToBuffer = nullptr;
-    s_nvrhiCommandList = nullptr;
-    s_nvrhiDevice = nullptr;
-
-    cudaDeviceSynchronize();
-
-    OPTIX_CHECK( optixDeviceContextDestroy( s_optixDeviceContext ) );
-    s_optixDeviceContext = nullptr;
-}
-
-void CopyContent( nvrhi::TextureHandle fromTexture, nvrhi::BufferHandle toBuffer )
-{
-    s_nvrhiCommandList->open();
-
-    nvrhi::BindingSetHandle bindingSet;
-    {
-        auto bindingSetDesc = nvrhi::BindingSetDesc()
-                              .addItem( nvrhi::BindingSetItem::Texture_SRV( 0, fromTexture ) )
-                              .addItem( nvrhi::BindingSetItem::TypedBuffer_UAV( 0, toBuffer ) )
-                              .addItem( nvrhi::BindingSetItem::PushConstants( 0, sizeof( uint4 ) ) );
-
-        auto pipelineDesc = s_pipelineCopyTextureToBuffer->getDesc();
-
-        bindingSet = s_nvrhiDevice->createBindingSet( bindingSetDesc, pipelineDesc.bindingLayouts.front() );
-    }
-
-    nvrhi::ComputeState computeState = {};
-    computeState.setPipeline( s_pipelineCopyTextureToBuffer );
-    computeState.addBindingSet( bindingSet );
-    s_nvrhiCommandList->setComputeState( computeState );
-
-    uint4 constants;
-    s_nvrhiCommandList->setPushConstants( &constants, sizeof(constants) );
-
-    const uint32_t threadSize = 8;
-    const uint32_t groupSizeX = DivideRoundUp( fromTexture->getDesc().width, threadSize ) * threadSize;
-    const uint32_t groupSizeY = DivideRoundUp( fromTexture->getDesc().height, threadSize ) * threadSize;
-    s_nvrhiCommandList->dispatch( groupSizeX, groupSizeY, 1 );
-
-    s_nvrhiCommandList->close();
-    s_nvrhiDevice->executeCommandList( s_nvrhiCommandList );
-}
-
-void CopyContent( nvrhi::BufferHandle fromBuffer, nvrhi::TextureHandle toTexture )
-{
-    s_nvrhiCommandList->open();
-
-    nvrhi::BindingSetHandle bindingSet;
-    {
-        auto bindingSetDesc = nvrhi::BindingSetDesc()
-                              .addItem( nvrhi::BindingSetItem::Texture_UAV( 0, toTexture ) )
-                              .addItem( nvrhi::BindingSetItem::TypedBuffer_SRV( 0, fromBuffer ) )
-                              .addItem( nvrhi::BindingSetItem::PushConstants( 0, sizeof( uint4 ) ) );
-
-        auto pipelineDesc = s_pipelineCopyBufferToTexture->getDesc();
-
-        bindingSet = s_nvrhiDevice->createBindingSet( bindingSetDesc, pipelineDesc.bindingLayouts.front() );
-    }
-
-    nvrhi::ComputeState computeState = {};
-    computeState.setPipeline( s_pipelineCopyBufferToTexture );
-    computeState.addBindingSet( bindingSet );
-    s_nvrhiCommandList->setComputeState( computeState );
-
-    uint4 constants;
-    s_nvrhiCommandList->setPushConstants( &constants, sizeof( constants ) );
-
-    const uint32_t threadSize = 8;
-    const uint32_t groupSizeX = DivideRoundUp( toTexture->getDesc().width, threadSize ) * threadSize;
-    const uint32_t groupSizeY = DivideRoundUp( toTexture->getDesc().height, threadSize ) * threadSize;
-    s_nvrhiCommandList->dispatch( groupSizeX, groupSizeY, 1 );
-
-    s_nvrhiCommandList->close();
-    s_nvrhiDevice->executeCommandList( s_nvrhiCommandList );
-}
-
-void CopyContent( ID3D12Resource* fromTexture, nvrhi::BufferHandle toBuffer )
-{
-    nvrhi::TextureHandle textureHandle = CreateHandleForNativeTexture( s_nvrhiDevice, fromTexture );
-    CopyContent( textureHandle, toBuffer );
-}
-
-void CopyContent( nvrhi::BufferHandle fromBuffer, ID3D12Resource* toTexture )
-{
-    nvrhi::TextureHandle textureHandle = CreateHandleForNativeTexture( s_nvrhiDevice, toTexture );
-    CopyContent( fromBuffer, textureHandle );
-}
-
-OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
-{
-    Initialize_();
-
-    // Sanity check
-    SUTIL_ASSERT_MSG( !cfg.guideNormal || cfg.guideAlbedo,
-                      "Currently albedo is required if normal input is given" );
-    SUTIL_ASSERT_MSG( ( cfg.tileWidth == 0 && cfg.tileHeight == 0 ) || ( cfg.tileWidth > 0 && cfg.tileHeight > 0 ),
-                      "tile size must be > 0 for width and height" );
-
-    m_temporalMode = cfg.temporalMode;
-    m_tileWidth = cfg.tileWidth > 0 ? cfg.tileWidth : cfg.imageWidth;
-    m_tileHeight = cfg.tileHeight > 0 ? cfg.tileHeight : cfg.imageHeight;
-
-    bool kpMode = true;
-
-    // Initialize D3D resources
-    {
-        m_cudaWaitFence = std::make_shared<GPUFence>( s_nvrhiDevice );
-        m_d3dWaitFence = std::make_shared<GPUFence>( s_nvrhiDevice );
     }
 
     // Create denoiser
@@ -504,8 +119,8 @@ OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
 
         // Create denoise layer resources
         {
-            m_colorTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
-            m_outputTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
+            m_colorTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
+            m_outputTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
 
             m_denoiseLayer = {};
             m_denoiseLayer.type = OPTIX_DENOISER_AOV_TYPE_NONE;
@@ -513,7 +128,7 @@ OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
             m_denoiseLayer.output = m_outputTexture->optixImage;
 
             if ( cfg.temporalMode ) {
-                m_previousOutputTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
+                m_previousOutputTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
                 m_denoiseLayer.previousOutput = m_previousOutputTexture->optixImage; 
             }
         }
@@ -523,17 +138,17 @@ OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
             m_guideLayer = {};
 
             if ( cfg.guideAlbedo ) {
-                m_guideAlbedoTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
+                m_guideAlbedoTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
                 m_guideLayer.albedo = m_guideAlbedoTexture->optixImage;
             }
 
             if ( cfg.guideNormal ) {
-                m_guideNormalTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
+                m_guideNormalTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF4 );
                 m_guideLayer.normal = m_guideNormalTexture->optixImage;
             }
 
             if ( cfg.temporalMode ) {
-                m_guideFlowTexture = std::make_shared<GPUTexture>( s_nvrhiDevice, cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF2 );
+                m_guideFlowTexture = std::make_shared<GPUTexture>( RHI::GetD3D12Device(), cfg.imageWidth, cfg.imageHeight, OPTIX_PIXEL_FORMAT_HALF2 );
                 m_guideLayer.flow = m_guideFlowTexture->optixImage;
 
                 // Internal guide layer memory set to zero for first frame.
@@ -576,6 +191,7 @@ OptixDenoiseContext::OptixDenoiseContext( const OptixDenoiseConfig& cfg )
 
 OptixDenoiseContext::~OptixDenoiseContext() noexcept( false )
 {
+    // Make sure the stream is done before we destroy the denoiser, otherwise we'll get a crash.
     cudaDeviceSynchronize();
 
     OPTIX_CHECK( optixDenoiserDestroy( m_denoiser ) );
@@ -588,7 +204,7 @@ OptixDenoiseContext::~OptixDenoiseContext() noexcept( false )
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( m_state ) ) );
 }
 
-void OptixDenoiseContext::DenoiseInternal( const OptixDenoiseImageData& data )
+void OptixDenoiseContext::DenoiseInternal()
 {
     OptixDenoiserParams denoiserParams = {};
     denoiserParams.denoiseAlpha = OptixDenoiserAlphaMode::OPTIX_DENOISER_ALPHA_MODE_COPY;
@@ -649,49 +265,54 @@ void OptixDenoiseContext::Denoise( const OptixDenoiseImageData& data )
         m_denoiseLayer.previousOutput = m_firstFrame ? m_denoiseLayer.input : m_previousOutputTexture->optixImage;
     }
 
-    CopyContent( data.color, m_colorTexture->bufferHandle );
-
+    // Update input textures
+    RHI::CopyContent( data.color, m_colorTexture->bufferHandle );
     if ( data.albedo ) {
-        CopyContent( data.albedo, m_guideAlbedoTexture->bufferHandle );
+        RHI::CopyContent( data.albedo, m_guideAlbedoTexture->bufferHandle );
     }
-
     if ( data.normal ) {
-        CopyContent( data.normal, m_guideNormalTexture->bufferHandle );
+        RHI::CopyContent( data.normal, m_guideNormalTexture->bufferHandle );
     }
-
     if ( data.flow ) {
-        CopyContent( data.flow, m_guideFlowTexture->bufferHandle );
+        RHI::CopyContent( data.flow, m_guideFlowTexture->bufferHandle );
     }
 
-    ID3D12CommandQueue* d3dQueue = s_nvrhiDevice->getNativeQueue(nvrhi::ObjectTypes::D3D12_CommandQueue, nvrhi::CommandQueue::Graphics);
-
-    d3dQueue->Signal( m_cudaWaitFence->d3dFence, m_renderSyncCounter );
+    // Sync between D3D and CUDA
+    RHI::SignalD3D12Fence(m_cudaWaitFence->d3dFence, m_renderSyncCounter);
     WaitExternalSemaphore( m_cudaWaitFence->cudaSempaphore, m_renderSyncCounter, m_stream );
 
-    DenoiseInternal( data );
+    // Denoise
+    DenoiseInternal();
     // CUDA_SYNC_CHECK();
 
+    // Sync Between CUDA and D3D
     SignalExternalSemaphore( m_d3dWaitFence->cudaSempaphore, m_renderSyncCounter, m_stream );
-    d3dQueue->Wait( m_d3dWaitFence->d3dFence, m_renderSyncCounter );
+    RHI::WaitD3D12Fence( m_d3dWaitFence->d3dFence, m_renderSyncCounter );
 
-    CopyContent( m_outputTexture->bufferHandle, data.output );
+    // Copy output
+    RHI::CopyContent( m_outputTexture->bufferHandle, data.output );
 
-    if ( data.readback != OptixDenoiseReadback::None && data.readbackTexture != nullptr ) {
+    // Copy readback texture
+    if ( data.readback != Readback::None && data.readbackTexture != nullptr ) {
         std::shared_ptr<GPUTexture> readbackTexture{};
-        if ( data.readback == OptixDenoiseReadback::Albedo ) {
+        if ( data.readback == Readback::Albedo ) {
             readbackTexture = m_guideAlbedoTexture;
-        } else if ( data.readback == OptixDenoiseReadback::Normal ) {
+        }
+        else if ( data.readback == Readback::Normal ) {
             readbackTexture = m_guideNormalTexture;
-        } else if ( data.readback == OptixDenoiseReadback::Flow ) {
+        }
+        else if ( data.readback == Readback::Flow ) {
             readbackTexture = m_temporalMode ? m_guideFlowTexture : nullptr;
-        } else if ( data.readback == OptixDenoiseReadback::Color ) {
+        }
+        else if ( data.readback == Readback::Color ) {
             readbackTexture = m_colorTexture;
-        } else if ( data.readback == OptixDenoiseReadback::PreviousOutput ) {
-            readbackTexture = m_previousOutputTexture;
+        }
+        else if ( data.readback == Readback::PreviousOutput ) {
+            readbackTexture = m_temporalMode ? m_previousOutputTexture : nullptr;
         }
 
         if (readbackTexture)
-            CopyContent( readbackTexture->bufferHandle, data.readbackTexture );
+            RHI::CopyContent( readbackTexture->bufferHandle, data.readbackTexture );
     }
 
     m_firstFrame = false;

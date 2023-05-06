@@ -1,0 +1,147 @@
+<?xml version="1.0"?>
+<NetworkModel name="OIDN_rt_hdr_alb_nrm" version="2" user_version_tag="1">
+	<Layer name="concat2" type="concatenation" edit_pos="1088,496" input="upsample2,pool1">
+		<Parameters axis="1" />
+	</Layer>
+	<Layer name="concat3" type="concatenation" edit_pos="1088,704" input="upsample3,pool2">
+		<Parameters axis="1" />
+	</Layer>
+	<Layer name="concat4" type="concatenation" edit_pos="1088,912" input="upsample4,pool3">
+		<Parameters axis="1" />
+	</Layer>
+	<Layer name="concat_inputs" type="concatenation" edit_pos="48,-96" input="input_color,input_albedo,input_normal">
+		<Parameters axis="1" />
+	</Layer>
+	<Layer name="concatenation_0" type="concatenation" edit_pos="1072,288" input="upsample_0,concat_inputs">
+		<Parameters axis="1" />
+	</Layer>
+	<Layer name="dec_conv0" type="convolution" edit_pos="1600,64" input="dec_conv1b">
+		<Parameters apply_bias="true" features="3" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+	</Layer>
+	<Layer name="dec_conv1a" type="convolution" edit_pos="1424,288" input="concatenation_0">
+		<Parameters apply_bias="true" features="64" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv1b" type="convolution" edit_pos="1808,288" input="dec_conv1a">
+		<Parameters apply_bias="true" features="32" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv2a" type="convolution" edit_pos="1424,496" input="concat2">
+		<Parameters apply_bias="true" features="64" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv2b" type="convolution" edit_pos="1808,496" input="dec_conv2a">
+		<Parameters apply_bias="true" features="64" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv3a" type="convolution" edit_pos="1424,704" input="concat3">
+		<Parameters apply_bias="true" features="96" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv3b" type="convolution" edit_pos="1808,704" input="dec_conv3a">
+		<Parameters apply_bias="true" features="96" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv4a" type="convolution" edit_pos="1424,912" input="concat4">
+		<Parameters apply_bias="true" features="112" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="dec_conv4b" type="convolution" edit_pos="1808,912" input="dec_conv4a">
+		<Parameters apply_bias="true" features="112" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv0" type="convolution" edit_pos="32,48" input="concat_inputs">
+		<Parameters apply_bias="true" features="32" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv1" type="convolution" edit_pos="32,272" input="enc_conv0">
+		<Parameters apply_bias="true" features="32" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv2" type="convolution" edit_pos="32,496" input="pool1">
+		<Parameters apply_bias="true" features="48" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv3" type="convolution" edit_pos="32,704" input="pool2">
+		<Parameters apply_bias="true" features="64" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv4" type="convolution" edit_pos="32,912" input="pool3">
+		<Parameters apply_bias="true" features="80" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv5a" type="convolution" edit_pos="384,1120" input="pool4">
+		<Parameters apply_bias="true" features="96" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="enc_conv5b" type="convolution" edit_pos="736,1120" input="enc_conv5a">
+		<Parameters apply_bias="true" features="96" kernel="3x3" padding="same" padding_tuple="0x0" stride="1x1" />
+		<Activation type="relu">
+			<Parameters alpha="0.0" />
+		</Activation>
+	</Layer>
+	<Layer name="input_albedo" type="input" edit_pos="192,-336">
+		<Parameters dims="1088x464x3" rgba="false" scale="1.0" shift="0" tiling="16" />
+	</Layer>
+	<Layer name="input_color" type="input" edit_pos="0,-336">
+		<Parameters dims="1088x464x3" rgba="false" scale="1.0" shift="0" tiling="16" />
+	</Layer>
+	<Layer name="input_normal" type="input" edit_pos="416,-336">
+		<Parameters dims="1088x464x3" rgba="false" scale="1.0" shift="0" tiling="16" />
+	</Layer>
+	<Layer name="output" type="output" edit_pos="1392,-192" input="dec_conv0">
+		<Parameters analysis_view="image" channels="0" height="0" label_path="" offset="0x0x0" width="0" />
+	</Layer>
+	<Layer name="pool1" type="pooling" edit_pos="416,288" input="enc_conv1">
+		<Parameters operation="max" padding="0x0" size="2x2" stride="2x2" />
+	</Layer>
+	<Layer name="pool2" type="pooling" edit_pos="416,496" input="enc_conv2">
+		<Parameters operation="max" padding="0x0" size="2x2" stride="2x2" />
+	</Layer>
+	<Layer name="pool3" type="pooling" edit_pos="416,704" input="enc_conv3">
+		<Parameters operation="max" padding="0x0" size="2x2" stride="2x2" />
+	</Layer>
+	<Layer name="pool4" type="pooling" edit_pos="416,912" input="enc_conv4">
+		<Parameters operation="max" padding="0x0" size="2x2" stride="2x2" />
+	</Layer>
+	<Layer name="upsample2" type="upsample" edit_pos="832,496" input="dec_conv3b">
+		<Parameters factor="2x2" fixed_upscale="" method="nearest" />
+	</Layer>
+	<Layer name="upsample3" type="upsample" edit_pos="832,704" input="dec_conv4b">
+		<Parameters factor="2x2" fixed_upscale="" method="nearest" />
+	</Layer>
+	<Layer name="upsample4" type="upsample" edit_pos="832,912" input="enc_conv5b">
+		<Parameters factor="2x2" fixed_upscale="" method="nearest" />
+	</Layer>
+	<Layer name="upsample_0" type="upsample" edit_pos="816,288" input="dec_conv2b">
+		<Parameters factor="2x2" fixed_upscale="" method="nearest" />
+	</Layer>
+</NetworkModel>

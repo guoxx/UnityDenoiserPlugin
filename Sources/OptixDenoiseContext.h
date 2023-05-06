@@ -3,30 +3,22 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 #include <memory>
+#include "Utils.h"
 
-namespace UnityDenoisePlugin
+namespace UnityDenoiserPlugin
 {
 
 class GPUFence;
 class GPUTexture;
-
-enum OptixDenoiseReadback {
-    None = 0,
-    Albedo = 1,
-    Normal = 2,
-    Flow = 3,
-    Color = 4,
-    PreviousOutput = 5,
-};
 
 struct OptixDenoiseConfig {
     uint32_t imageWidth;
     uint32_t imageHeight;
     uint32_t tileWidth;
     uint32_t tileHeight;
-    uint32_t guideAlbedo;
-    uint32_t guideNormal;
-    uint32_t temporalMode;
+    bool guideAlbedo;
+    bool guideNormal;
+    bool temporalMode;
 };
 
 struct OptixDenoiseImageData {
@@ -37,7 +29,7 @@ struct OptixDenoiseImageData {
     ID3D12Resource* color = nullptr;
     ID3D12Resource* output = nullptr;
 
-    OptixDenoiseReadback readback = OptixDenoiseReadback::None;
+    Readback readback = Readback::None;
     ID3D12Resource* readbackTexture = nullptr;
 };
 
@@ -50,7 +42,7 @@ public:
     void Denoise( const OptixDenoiseImageData& data );
 
 private:
-    void DenoiseInternal( const OptixDenoiseImageData& data );
+    void DenoiseInternal();
 
     bool m_firstFrame = true;
     bool m_temporalMode = false;
@@ -81,6 +73,8 @@ private:
     std::shared_ptr<GPUTexture> m_guideAlbedoTexture = {};
     std::shared_ptr<GPUTexture> m_guideNormalTexture = {};
     std::shared_ptr<GPUTexture> m_guideFlowTexture = {};
+
+    static OptixDeviceContext s_optixDeviceContext;
 };
 
 }  // namespace UnityDenoisePlugin
