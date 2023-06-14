@@ -1,4 +1,4 @@
-[submodule "Externals/nvrhi"]
-	path = Externals/nvrhi
-	url = https://github.com/NVIDIAGameWorks/nvrhi.git
-	branch = main
+[submodule "Externals/oidn"]
+	path = Externals/oidn
+	url = https://github.com/guoxx/oidn.git
+	branch = master

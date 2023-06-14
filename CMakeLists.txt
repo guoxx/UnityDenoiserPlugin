@@ -15,20 +15,9 @@ file(GLOB SOURCE_FILES Sources/*.cpp)
 
 add_library(${target_name} SHARED ${SOURCE_FILES})
 
-# Setup NVRHI
-set(NVRHI_INSTALL OFF)
-set(NVRHI_WITH_SHADER_COMPILER OFF)
-set(NVRHI_WITH_VULKAN OFF)
-set(NVRHI_WITH_DX11 OFF)
-set(NVRHI_WITH_DX12 ON)
-add_subdirectory(Externals/NVRHI)
-add_dependencies(${target_name} nvrhi nvrhi_d3d12)
-target_link_libraries(${target_name} nvrhi nvrhi_d3d12)
-
 # Add include directories
 target_include_directories(${target_name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Externals/UnityPluginAPI
-    ${CMAKE_CURRENT_SOURCE_DIR}/Externals/nvrhi/include
     ${OptiX_INCLUDE}
     ${CUDA_INCLUDE_DIRS}
     )
@@ -39,28 +28,12 @@ target_precompile_headers(${target_name} PRIVATE Sources/pch.h)
 # Link against the necessary OptiX libraries
 target_link_libraries(${target_name} ${OptiX_LIBRARIES} ${CUDA_LIBRARIES})
 
-# Build HLSL shaders
-file(GLOB HLSL_SHADER_FILES Sources/Shaders/*.cs.hlsl)
-
-set_source_files_properties(${HLSL_SHADER_FILES} PROPERTIES ShaderType "cs")
-set_source_files_properties(${HLSL_SHADER_FILES} PROPERTIES ShaderModel "6_0")
-
-foreach(FILE ${HLSL_SHADER_FILES})
-  get_filename_component(FILE_WE ${FILE} NAME_WE)
-  get_filename_component(FILE_DIR ${FILE} DIRECTORY)
-  get_source_file_property(shadertype ${FILE} ShaderType)
-  get_source_file_property(shadermodel ${FILE} ShaderModel)
-  add_custom_command(TARGET ${target_name} PRE_BUILD
-                     COMMAND dxc.exe /nologo /Emain /T${shadertype}_${shadermodel} $<IF:$<CONFIG:DEBUG>,/Od,/O3> /Zi /Fh ${FILE_DIR}/${FILE_WE}.h /Vn g_${FILE_WE}_ByteCode /Fd ${CMAKE_BINARY_DIR}/${FILE_WE}.pdb ${FILE}
-                     MAIN_DEPENDENCY ${FILE}
-                     COMMENT "HLSL ${FILE}"
-                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                     VERBATIM)
-endforeach(FILE)
-
 # OIDN
+set(OIDN_DEVICE_CPU OFF)
+set(OIDN_DEVICE_CUDA ON)
+set(OIDN_APPS OFF)
 add_subdirectory(Externals/oidn)
 target_include_directories(${target_name} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/Externals/oidn)
-add_dependencies(${target_name} OIDN_UNet)
-target_link_libraries(${target_name} OIDN_UNet)
+    ${CMAKE_CURRENT_SOURCE_DIR}/Externals/oidn/include)
+add_dependencies(${target_name} OpenImageDenoise2)
+target_link_libraries(${target_name} OpenImageDenoise2)

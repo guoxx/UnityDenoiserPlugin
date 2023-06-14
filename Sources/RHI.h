@@ -1,49 +1,73 @@
 #pragma once
 
-#include <nvrhi/nvrhi.h>
 #include <cuda_runtime.h>
+#include <OpenImageDenoise/oidn.h>
 #include <optix.h>
+#include <list>
 
 namespace UnityDenoiserPlugin
 {
 
-class GPUFence
+class Fence
 {
 public:
+    uint64_t fenceValue = 0;
     ID3D12Fence* d3dFence = nullptr;
     cudaExternalSemaphore_t cudaSempaphore = nullptr;
 
-    GPUFence( nvrhi::DeviceHandle rhiDevice );
-    ~GPUFence() noexcept( false );
+    Fence();
+    ~Fence() noexcept( false );
 };
 
-class GPUTexture
+class OptixTexture
 {
 public:
     OptixImage2D optixImage = {};
-    nvrhi::BufferHandle bufferHandle;
+    ID3D12Resource* d3dBuffer = nullptr;
 
-    GPUTexture( nvrhi::DeviceHandle rhiDevice, int width, int height, OptixPixelFormat format );
-    ~GPUTexture();
+    OptixTexture( int w, int h, int c );
+    ~OptixTexture();
+
+private:
+    cudaExternalMemory_t extMem = nullptr;
+    void* devPtr = nullptr;
+};
+
+class OIDNTexture
+{
+public:
+    OIDNBuffer oidnBuffer = nullptr;
+    ID3D12Resource* d3dBuffer = nullptr;
+
+    OIDNTexture( OIDNDevice oidnDevice, int w, int h, int c );
+    ~OIDNTexture();
 };
 
 class RHI
 {
 public:
-    static void Initialize();
-    static void Shutdown();
+    static void CopyFromUnityBuffers(ID3D12Resource* fromBuffer[], ID3D12Resource* toBuffer[], int numBuffers);
+    static void CopyToUnityBuffers(ID3D12Resource* fromBuffer[], ID3D12Resource* toBuffer[], int numBuffers);
 
-    static nvrhi::DeviceHandle GetD3D12Device();
-    static nvrhi::CommandListHandle GetD3D12CommandList();
+    static void CudaSignalD3DWait( CUstream cudaStream, Fence* fence );
+    static void D3DSignalCudaWait( CUstream cudaStream, Fence* fence );
 
-    static void SignalD3D12Fence(ID3D12Fence* fence, uint64_t value);
-    static void WaitD3D12Fence(ID3D12Fence* fence, uint64_t value);
+    static ID3D12Device* GetDevice();
 
-    static void CopyContent( nvrhi::TextureHandle fromTexture, nvrhi::BufferHandle toBuffer );
-    static void CopyContent( ID3D12Resource* fromTexture, nvrhi::BufferHandle toBuffer );
+private:
+    static ID3D12CommandQueue* GetCommandQueue();
 
-    static void CopyContent( nvrhi::BufferHandle fromBuffer, nvrhi::TextureHandle toTexture );
-    static void CopyContent( nvrhi::BufferHandle fromBuffer, ID3D12Resource* toTexture );
+    struct CommandListChunk
+    {
+        ID3D12GraphicsCommandList* commandList = nullptr;
+        ID3D12CommandAllocator* commandAllocator = nullptr;
+        ID3D12Fence* fence = nullptr;
+        uint64_t fenceValue = 0;
+    };
+    static std::list<CommandListChunk> s_commandLists;
+
+    static CommandListChunk GetCommandList();
+    static void ExecuteCommandList(CommandListChunk cmdlist, int stateCount, UnityGraphicsD3D12ResourceState * states);
 };
 
 }

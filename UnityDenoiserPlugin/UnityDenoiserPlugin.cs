@@ -1,70 +1,143 @@
 ﻿using System;
 using System.Runtime.InteropServices;
-
+using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace UnityDenoiserPlugin
 {
     public enum DenoiserType
     {
-        Optix = 0,
-        Oidn = 1,
-    }
-
-    public enum Readback
-    {
-        None = 0,
-        Albedo = 1,
-        Normal = 2,
-        Flow = 3,
-        Color = 4,
-        PreviousOutput = 5,
+        OptiX = 0,
+        OIDN = 1,
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct DenoiseConfig
+    public struct DenoiserConfig
     {
-        public uint imageWidth;
-        public uint imageHeight;
-        public uint guideAlbedo;
-        public uint guideNormal;
-        public uint temporalMode;
+        public int imageWidth;
+        public int imageHeight;
+        public int guideAlbedo;
+        public int guideNormal;
+        // Used by OptiX
+        public int temporalMode;
+        // Used by OIDN
+        public int cleanAux;
+        public int prefilterAux;
 
-        public bool Equals(DenoiseConfig cfg)
+        public bool Equals(DenoiserConfig cfg)
         {
             return imageWidth == cfg.imageWidth &&
                    imageHeight == cfg.imageHeight &&
                    guideAlbedo == cfg.guideAlbedo &&
                    guideNormal == cfg.guideNormal &&
-                   temporalMode == cfg.temporalMode;
+                   temporalMode == cfg.temporalMode &&
+                   cleanAux == cfg.cleanAux &&
+                   prefilterAux == cfg.prefilterAux;
         }
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public struct DenoiseEventData
+    class DenoiserPluginWrapper : IDisposable
     {
-        public IntPtr denoiseContext;
-        public IntPtr albedo;
-        public IntPtr normal;
-        public IntPtr flow;
-        public IntPtr color;
-        public IntPtr output;
-        public Readback readback;
-        public IntPtr readbackTexture;
-    }
+        public DenoiserType Type;
+        public DenoiserConfig Config;
 
-    public static class Interface
-    {
-        [DllImport("UnityDenoiserPlugin")]
-        public static extern IntPtr CreateDenoiseContext(DenoiserType type, ref DenoiseConfig cfg);
+        IntPtr m_ptr;
+        RenderEventDataArray m_eventData;
+
+        public DenoiserPluginWrapper(DenoiserType type, DenoiserConfig cfg)
+        {
+            Type = type;
+            Config = cfg;
+
+            m_ptr = CreateDenoiser(type, ref cfg);
+            m_eventData = new RenderEventDataArray();
+        }
+
+        public void Render(CommandBuffer commands, GraphicsBuffer color, GraphicsBuffer output,
+                           GraphicsBuffer albedo = null, GraphicsBuffer normal = null, GraphicsBuffer motion = null)
+        {
+            RenderEventData eventData;
+            eventData.denoiser = m_ptr;
+            eventData.albedo = Config.guideAlbedo != 0 ? albedo.GetNativeBufferPtr() : IntPtr.Zero;
+            eventData.normal = Config.guideNormal != 0 ? normal.GetNativeBufferPtr() : IntPtr.Zero;
+            eventData.flow = Config.temporalMode != 0 ? motion.GetNativeBufferPtr() : IntPtr.Zero;
+            eventData.color = color.GetNativeBufferPtr();
+            eventData.output = output.GetNativeBufferPtr();
+
+            commands.IssuePluginEventAndData(GetRenderEventFunc(), (int) Type, m_eventData.SetData(eventData));
+        }
+
+        public void Dispose()
+        {
+            DestroyDenoiser(Type, m_ptr);
+            m_eventData.Dispose();
+
+            GC.SuppressFinalize(this);
+        }
 
         [DllImport("UnityDenoiserPlugin")]
-        public static extern void DestroyDenoiseContext(DenoiserType type, IntPtr ptr);
+        static extern IntPtr CreateDenoiser(DenoiserType type, ref DenoiserConfig cfg);
 
         [DllImport("UnityDenoiserPlugin")]
-        public static extern IntPtr GetRenderEventFunc();
+        static extern void DestroyDenoiser(DenoiserType type, IntPtr ptr);
 
         [DllImport("UnityDenoiserPlugin")]
-        public static extern void OIDNSetPluginsAndWeightsFolder(string pluginsFolder, string baseWeightFolder);
+        static extern IntPtr GetRenderEventFunc();
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RenderEventData
+        {
+            public IntPtr denoiser;
+            public IntPtr albedo;
+            public IntPtr normal;
+            public IntPtr flow;
+            public IntPtr color;
+            public IntPtr output;
+        }
+
+        private class RenderEventDataArray : IDisposable
+        {
+            const int ElementCount = 8;
+
+            int m_index;
+            IntPtr[] m_array;
+
+            public RenderEventDataArray()
+            {
+                m_index = 0;
+
+                m_array = new IntPtr[ElementCount];
+                for (int i = 0; i < ElementCount; ++i)
+                {
+                    int maxElementSize = Marshal.SizeOf<RenderEventData>();
+                    m_array[i] = Marshal.AllocHGlobal(maxElementSize);
+                }
+            }
+
+            public IntPtr SetData<T>(T data)
+            {
+                m_index = (m_index + 1) % ElementCount;
+
+                IntPtr ptr = m_array[m_index];
+                Marshal.StructureToPtr(data, ptr, true);
+                return ptr;
+            }
+
+            public void Dispose()
+            {
+                if (m_array != null)
+                {
+                    for (int i = 0; i < m_array.Length; ++i)
+                    {
+                        Marshal.FreeHGlobal(m_array[i]);
+                    }
+
+                    m_array = null;
+                }
+
+                GC.SuppressFinalize(this);
+            }
+        }
     }
 }
 

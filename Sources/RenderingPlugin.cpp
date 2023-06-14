@@ -6,14 +6,12 @@
 #include <IUnityLog.h>
 
 #include "RHI.h"
-#include "OptixDenoiseContext.h"
-#include "OidnDenoiseContext.h"
+#include "OptixDenoiser.h"
+#include "OIDNDenoiser.h"
 
 static IUnityGraphics* s_Graphics = NULL;
 static IUnityGraphicsD3D12v7* s_RenderAPI_D3D12 = NULL;
 static IUnityLog* s_Logger = nullptr;
-static std::string s_OidnBaseWeightsPath = "";
-static std::string s_OidnPluginsFolder = "";
 
 IUnityLog* UnityLogger()
 {
@@ -26,68 +24,52 @@ IUnityGraphicsD3D12v7* UnityRenderAPI_D3D12()
 }
 
 enum DenoiserType : int {
-    Optix = 0,
-    Oidn = 1,
+    OptiX = 0,
+    OIDN = 1,
 };
 
-struct DenoiseConfig {
+struct DenoiserConfig {
     uint32_t imageWidth;
     uint32_t imageHeight;
-    uint32_t guideAlbedo;
-    uint32_t guideNormal;
-    uint32_t temporalMode;
+    int32_t guideAlbedo;
+    int32_t guideNormal;
+    int32_t temporalMode;
+    int32_t cleanAux;
+    int32_t prefilterAux;
 };
 
-struct DenoiseEventData {
+struct RenderEventData {
     intptr_t denoiseContext;
     intptr_t albedo;
     intptr_t normal;
     intptr_t flow;
     intptr_t color;
     intptr_t output;
-    uint32_t readback;
-    intptr_t readbackTexture;
 };
 
-static void OnDenoiseOptix( DenoiseEventData* data )
+static void OnRenderOptix( RenderEventData* data )
 {
-    UnityDenoiserPlugin::OptixDenoiseImageData imageData;
+    UnityDenoiserPlugin::OptixDenoiserImageData imageData;
     imageData.albedo = reinterpret_cast<ID3D12Resource*>( data->albedo );
     imageData.normal = reinterpret_cast<ID3D12Resource*>( data->normal );
     imageData.flow = reinterpret_cast<ID3D12Resource*>( data->flow );
     imageData.color = reinterpret_cast<ID3D12Resource*>( data->color );
     imageData.output = reinterpret_cast<ID3D12Resource*>( data->output );
-    imageData.readback = static_cast<UnityDenoiserPlugin::Readback>( data->readback );
-    imageData.readbackTexture = reinterpret_cast<ID3D12Resource*>( data->readbackTexture );
 
-    auto ctx = reinterpret_cast<UnityDenoiserPlugin::OptixDenoiseContext*>( data->denoiseContext );
+    auto ctx = reinterpret_cast<UnityDenoiserPlugin::OptixDenoiser_*>( data->denoiseContext );
     ctx->Denoise( imageData );
 }
 
-static void OnDenoiseOdin( DenoiseEventData* data )
+static void OnRenderOIDN( RenderEventData* data )
 {
-    UnityDenoiserPlugin::OidnDenoiseImageData imageData;
+    UnityDenoiserPlugin::OIDNDenoiserImageData imageData;
     imageData.albedo = reinterpret_cast<ID3D12Resource*>( data->albedo );
     imageData.normal = reinterpret_cast<ID3D12Resource*>( data->normal );
     imageData.color = reinterpret_cast<ID3D12Resource*>( data->color );
     imageData.output = reinterpret_cast<ID3D12Resource*>( data->output );
-    imageData.readback = static_cast<UnityDenoiserPlugin::Readback>( data->readback );
-    imageData.readbackTexture = reinterpret_cast<ID3D12Resource*>( data->readbackTexture );
 
-    auto ctx = reinterpret_cast<UnityDenoiserPlugin::OidnDenoiseContext*>( data->denoiseContext );
+    auto ctx = reinterpret_cast<UnityDenoiserPlugin::OIDNDenoiser*>( data->denoiseContext );
     ctx->Denoise( imageData );
-}
-
-static void OnGraphicsDeviceEvent( UnityGfxDeviceEventType eventType )
-{
-    if ( eventType == UnityGfxDeviceEventType::kUnityGfxDeviceEventInitialize )
-    {
-        UnityDenoiserPlugin::RHI::Initialize();
-    }
-    else if ( eventType == UnityGfxDeviceEventType::kUnityGfxDeviceEventShutdown )
-    {
-        UnityDenoiserPlugin::RHI::Shutdown();
-    }
 }
 
 extern "C" void	UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces * unityInterfaces)
@@ -97,11 +79,6 @@ extern "C" void	UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnit
     s_Logger = unityInterfaces->Get<IUnityLog>();
 
     UNITY_LOG( s_Logger, __FUNCTION__ );
-
-    s_Graphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
-
-    // Run OnGraphicsDeviceEvent(initialize) manually on plugin load
-    OnGraphicsDeviceEvent(UnityGfxDeviceEventType::kUnityGfxDeviceEventInitialize);
 }
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
@@ -111,23 +88,15 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
     s_Graphics = nullptr;
     s_RenderAPI_D3D12 = nullptr;
     s_Logger = nullptr;
-
-    s_Graphics->UnregisterDeviceEventCallback(OnGraphicsDeviceEvent);
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API OIDNSetPluginsAndWeightsFolder( const char* pluginsFolder, const char* baseWeightFolder )
-{
-    s_OidnPluginsFolder = pluginsFolder;
-    s_OidnBaseWeightsPath = baseWeightFolder;
-}
-
-extern "C" intptr_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateDenoiseContext( DenoiserType type, const DenoiseConfig& cfg )
+extern "C" intptr_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateDenoiser( DenoiserType type, const DenoiserConfig& cfg )
 {
     UNITY_LOG( s_Logger, __FUNCTION__ );
 
-    if ( type == DenoiserType::Optix )
+    if ( type == DenoiserType::OptiX )
     {
-        UnityDenoiserPlugin::OptixDenoiseConfig p = {};
+        UnityDenoiserPlugin::OptixDenoiserConfig p = {};
         p.imageWidth = cfg.imageWidth;
         p.imageHeight = cfg.imageHeight;
         p.tileWidth = 0;
@@ -135,18 +104,18 @@ extern "C" intptr_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateDenoiseCont
         p.guideAlbedo = cfg.guideAlbedo;
         p.guideNormal = cfg.guideNormal;
         p.temporalMode = cfg.temporalMode;
-        return reinterpret_cast<intptr_t>( new UnityDenoiserPlugin::OptixDenoiseContext( p ) );
+        return reinterpret_cast<intptr_t>( new UnityDenoiserPlugin::OptixDenoiser_( p ) );
     }
-    else if ( type == DenoiserType::Oidn )
+    else if ( type == DenoiserType::OIDN )
     {
-        UnityDenoiserPlugin::OidnDenoiseConfig p = {};
+        UnityDenoiserPlugin::OIDNDenoiserConfig p = {};
         p.imageWidth = cfg.imageWidth;
         p.imageHeight = cfg.imageHeight;
         p.guideAlbedo = cfg.guideAlbedo;
         p.guideNormal = cfg.guideNormal;
-        p.baseWeightsPath = s_OidnBaseWeightsPath;
-        p.pluginsFolder = s_OidnPluginsFolder;
-        return reinterpret_cast<intptr_t>( new UnityDenoiserPlugin::OidnDenoiseContext( p ) );
+        p.cleanAux = cfg.cleanAux;
+        p.prefilterAux = cfg.prefilterAux;
+        return reinterpret_cast<intptr_t>( new UnityDenoiserPlugin::OIDNDenoiser( p ) );
     }
     else
     {
@@ -155,19 +124,19 @@ extern "C" intptr_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateDenoiseCont
     }
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DestroyDenoiseContext( DenoiserType type, intptr_t ptr )
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DestroyDenoiser( DenoiserType type, intptr_t ptr )
 {
     UNITY_LOG( s_Logger, __FUNCTION__ );
 
-    if ( type == DenoiserType::Optix )
+    if ( type == DenoiserType::OptiX )
     {
-        auto ctx = reinterpret_cast<UnityDenoiserPlugin::OptixDenoiseContext*>( ptr );
-        delete ctx;
+        auto denoiser = reinterpret_cast<UnityDenoiserPlugin::OptixDenoiser_*>( ptr );
+        delete denoiser;
     }
-    else if ( type == DenoiserType::Oidn )
+    else if ( type == DenoiserType::OIDN )
     {
-        auto ctx = reinterpret_cast<UnityDenoiserPlugin::OidnDenoiseContext*>( ptr );
-        delete ctx;
+        auto denoiser = reinterpret_cast<UnityDenoiserPlugin::OIDNDenoiser*>( ptr );
+        delete denoiser;
     }
     else
     {
@@ -177,13 +146,13 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DestroyDenoiseContext
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API OnRenderEvent( int eventId, void* data )
 {
-    if ( eventId == DenoiserType::Optix )
+    if ( eventId == DenoiserType::OptiX )
     {
-        OnDenoiseOptix( reinterpret_cast<DenoiseEventData*>( data ) );
+        OnRenderOptix( reinterpret_cast<RenderEventData*>( data ) );
     }
-    else if ( eventId == DenoiserType::Oidn )
+    else if ( eventId == DenoiserType::OIDN )
     {
-        OnDenoiseOdin( reinterpret_cast<DenoiseEventData*>( data ) );
+        OnRenderOIDN( reinterpret_cast<RenderEventData*>( data ) );
     }
     else
     {
