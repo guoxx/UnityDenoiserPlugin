@@ -2,6 +2,7 @@
 #include "Exception.h"
 #include <vector>
 #include <list>
+#include <assert.h>
 
 extern IUnityGraphicsD3D12v7* UnityRenderAPI_D3D12();
 
@@ -148,7 +149,7 @@ OIDNTexture::OIDNTexture( OIDNDevice oidnDevice, int w, int h, int c )
 
 OIDNTexture::~OIDNTexture()
 {
-    d3dBuffer->Release();
+    assert(d3dBuffer->Release() == 0);
     oidnReleaseBuffer( oidnBuffer );
 }
 

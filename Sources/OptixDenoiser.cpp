@@ -77,6 +77,7 @@ OptixDenoiser_::OptixDenoiser_( const OptixDenoiserConfig& cfg )
         OptixDenoiserOptions options = {};
         options.guideAlbedo = cfg.guideAlbedo ? 1 : 0;
         options.guideNormal = cfg.guideNormal ? 1 : 0;
+        options.denoiseAlpha = OptixDenoiserAlphaMode::OPTIX_DENOISER_ALPHA_MODE_COPY;
 
         OptixDenoiserModelKind modelKind;
         if ( kpMode ) {
@@ -206,7 +207,6 @@ OptixDenoiser_::~OptixDenoiser_() noexcept( false )
 void OptixDenoiser_::DenoiseInternal()
 {
     OptixDenoiserParams denoiserParams = {};
-    denoiserParams.denoiseAlpha = OptixDenoiserAlphaMode::OPTIX_DENOISER_ALPHA_MODE_COPY;
     denoiserParams.hdrIntensity = m_intensity;
     denoiserParams.hdrAverageColor = m_avgColor;
     denoiserParams.blendFactor = 0.0f;

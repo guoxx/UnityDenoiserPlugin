@@ -6,6 +6,11 @@
 namespace UnityDenoiserPlugin
 {
 
+static void OIDNLogFunc( void* userPtr, OIDNError code, const char* message )
+{
+    LogError( message );
+}
+
 OIDNDenoiser::OIDNDenoiser( const OIDNDenoiserConfig& cfg )
 {
     CUDA_CHECK( cudaStreamCreateWithFlags( &m_stream, cudaStreamNonBlocking ) );
@@ -17,6 +22,8 @@ OIDNDenoiser::OIDNDenoiser( const OIDNDenoiserConfig& cfg )
     cudaStream_t cudaStreams[ 1 ] = { m_stream };
     m_device = oidnNewCUDADevice( cudaDeviceIds, cudaStreams, 1 );
     oidnCommitDevice( m_device );
+
+    oidnSetDeviceErrorFunction( m_device, OIDNLogFunc, nullptr );
 
     m_colorTexture = std::make_shared<OIDNTexture>( m_device, cfg.imageWidth, cfg.imageHeight, 3 );
     m_outputTexture = std::make_shared<OIDNTexture>( m_device, cfg.imageWidth, cfg.imageHeight, 3 );
@@ -92,15 +99,21 @@ OIDNDenoiser::~OIDNDenoiser() noexcept( false )
     // Make sure the stream is done before we destroy the denoiser, otherwise we'll get a crash.
     oidnSyncDevice( m_device );
 
-    cudaDeviceSynchronize();
-    CUDA_CHECK( cudaStreamDestroy( m_stream ) );
-
     if ( m_albedoFilter )
         oidnReleaseFilter( m_albedoFilter );
     if ( m_normalFilter )
         oidnReleaseFilter( m_normalFilter );
     oidnReleaseFilter( m_filter );
+
+    m_colorTexture = nullptr;
+    m_albedoTexture = nullptr;
+    m_normalTexture = nullptr;
+    m_outputTexture = nullptr;
+
     oidnReleaseDevice( m_device );
+
+    cudaDeviceSynchronize();
+    CUDA_CHECK( cudaStreamDestroy( m_stream ) );
 }
 
 void OIDNDenoiser::DenoiseInternal()
