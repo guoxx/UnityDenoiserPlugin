@@ -149,7 +149,7 @@ OIDNTexture::OIDNTexture( OIDNDevice oidnDevice, int w, int h, int c )
 
 OIDNTexture::~OIDNTexture()
 {
-    assert(d3dBuffer->Release() == 0);
+    d3dBuffer->Release();
     oidnReleaseBuffer( oidnBuffer );
 }
 

@@ -35,5 +35,5 @@ set(OIDN_APPS OFF)
 add_subdirectory(Externals/oidn)
 target_include_directories(${target_name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Externals/oidn/include)
-add_dependencies(${target_name} OpenImageDenoise2)
-target_link_libraries(${target_name} OpenImageDenoise2)
+add_dependencies(${target_name} OpenImageDenoise)
+target_link_libraries(${target_name} OpenImageDenoise)

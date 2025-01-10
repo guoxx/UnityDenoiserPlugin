@@ -193,10 +193,10 @@ OptixDenoiser_::OptixDenoiser_( const OptixDenoiserConfig& cfg )
 OptixDenoiser_::~OptixDenoiser_() noexcept( false )
 {
     // Make sure the stream is done before we destroy the denoiser, otherwise we'll get a crash.
-    cudaDeviceSynchronize();
+    CUDA_CHECK( cudaStreamSynchronize( m_stream ) );
+    CUDA_CHECK( cudaStreamDestroy( m_stream ) );
 
     OPTIX_CHECK( optixDenoiserDestroy( m_denoiser ) );
-    CUDA_CHECK( cudaStreamDestroy( m_stream ) );
 
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( m_intensity ) ) );
     CUDA_CHECK( cudaFree( reinterpret_cast<void*>( m_avgColor ) ) );

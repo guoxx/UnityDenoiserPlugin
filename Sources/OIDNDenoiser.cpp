@@ -18,7 +18,13 @@ OIDNDenoiser::OIDNDenoiser( const OIDNDenoiserConfig& cfg )
     m_cudaWaitFence = std::make_shared<Fence>();
     m_d3dWaitFence = std::make_shared<Fence>();
 
-    int cudaDeviceIds[ 1 ] = { -1 };
+
+    int cudaDeviceCnt = 0;
+    CUDA_CHECK( cudaGetDeviceCount( &cudaDeviceCnt ) );
+    std::vector<int> cudaDevices( cudaDeviceCnt );
+    CUDA_CHECK( cudaGetDevice( cudaDevices.data() ) );
+
+    int cudaDeviceIds[ 1 ] = { cudaDevices[0] };
     cudaStream_t cudaStreams[ 1 ] = { m_stream };
     m_device = oidnNewCUDADevice( cudaDeviceIds, cudaStreams, 1 );
     oidnCommitDevice( m_device );
@@ -110,10 +116,16 @@ OIDNDenoiser::~OIDNDenoiser() noexcept( false )
     m_normalTexture = nullptr;
     m_outputTexture = nullptr;
 
+    m_cudaWaitFence = nullptr;
+    m_d3dWaitFence = nullptr;
+
+    // OIDN device must be released after all resources (including textures) are released
     oidnReleaseDevice( m_device );
 
-    cudaDeviceSynchronize();
+    CUDA_CHECK( cudaStreamSynchronize( m_stream ) );
     CUDA_CHECK( cudaStreamDestroy( m_stream ) );
+
+    // cudaDeviceReset();
 }
 
 void OIDNDenoiser::DenoiseInternal()
