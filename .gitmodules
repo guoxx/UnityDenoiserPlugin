@@ -1,4 +1,4 @@
 [submodule "Externals/oidn"]
 	path = Externals/oidn
-	url = https://github.com/guoxx/oidn.git
+	url = https://github.com/RenderKit/oidn.git
 	branch = master
