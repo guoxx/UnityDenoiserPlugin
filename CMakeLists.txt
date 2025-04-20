@@ -31,6 +31,7 @@ target_link_libraries(${target_name} ${OptiX_LIBRARIES} ${CUDA_LIBRARIES})
 # OIDN
 set(OIDN_DEVICE_CPU OFF)
 set(OIDN_DEVICE_CUDA ON)
+set(OIDN_STATIC_LIB ON)
 set(OIDN_APPS OFF)
 add_subdirectory(Externals/oidn)
 target_include_directories(${target_name} PRIVATE
