@@ -12,4 +12,8 @@ void LogMessage( const char* msg );
 void LogWarning( const char* msg );
 void LogError( const char* msg );
 
+void LogMessageFormat( const char* format, ... );
+void LogWarningFormat( const char* format, ... );
+void LogErrorFormat( const char* format, ... );
+
 }
