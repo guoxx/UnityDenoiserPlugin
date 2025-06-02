@@ -2,3 +2,7 @@
 	path = Externals/oidn
 	url = https://github.com/RenderKit/oidn.git
 	branch = master
+[submodule "Externals/DLSS"]
+	path = Externals/DLSS
+	url = https://github.com/NVIDIA/DLSS.git
+	branch = main
