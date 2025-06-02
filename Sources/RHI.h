@@ -54,9 +54,6 @@ public:
 
     static ID3D12Device* GetDevice();
 
-private:
-    static ID3D12CommandQueue* GetCommandQueue();
-
     struct CommandListChunk
     {
         ID3D12GraphicsCommandList* commandList = nullptr;
@@ -64,10 +61,15 @@ private:
         ID3D12Fence* fence = nullptr;
         uint64_t fenceValue = 0;
     };
-    static std::list<CommandListChunk> s_commandLists;
 
     static CommandListChunk GetCommandList();
-    static void ExecuteCommandList(CommandListChunk cmdlist, int stateCount, UnityGraphicsD3D12ResourceState * states);
+    static void ExecuteCommandList(CommandListChunk& cmdlist, int stateCount, UnityGraphicsD3D12ResourceState * states);
+    static void RecycleCommandList(CommandListChunk& cmdlist);
+
+private:
+    static ID3D12CommandQueue* GetCommandQueue();
+
+    static std::list<CommandListChunk> s_commandLists;
 };
 
 }

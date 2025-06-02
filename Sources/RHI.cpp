@@ -1,5 +1,6 @@
 #include "RHI.h"
 #include "Exception.h"
+#include "Utils.h"
 #include <vector>
 #include <list>
 #include <assert.h>
@@ -263,7 +264,7 @@ RHI::CommandListChunk RHI::GetCommandList()
     return cmdlist;
 }
 
-void RHI::ExecuteCommandList(CommandListChunk cmdlist, int stateCount, UnityGraphicsD3D12ResourceState * states)
+void RHI::ExecuteCommandList(CommandListChunk& cmdlist, int stateCount, UnityGraphicsD3D12ResourceState * states)
 {
     cmdlist.commandList->Close();
 
@@ -273,6 +274,19 @@ void RHI::ExecuteCommandList(CommandListChunk cmdlist, int stateCount, UnityGrap
     UnityRenderAPI_D3D12()->GetCommandQueue()->Signal( cmdlist.fence, cmdlist.fenceValue );
 
     s_commandLists.push_back( cmdlist );
+}
+
+void RHI::RecycleCommandList(CommandListChunk& cmdlist)
+{
+    s_commandLists.push_back( cmdlist );
+    
+#if _DEBUG
+    uint64_t completedFenceValue = cmdlist.fence->GetCompletedValue();
+    if ( cmdlist.fenceValue != completedFenceValue )
+    {
+        LogErrorFormat( "Recycle A CommandList with fence value %llu, but completed fence value is %llu", cmdlist.fenceValue, completedFenceValue );
+    }
+#endif
 }
 
 }
