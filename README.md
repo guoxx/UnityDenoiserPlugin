@@ -18,6 +18,52 @@ UnityDenoiserPlugin is designed for real-time performance, taking only a few mil
 1. Install [NVIDIA OptiX](https://developer.nvidia.com/optix) and set the `OptiX_INSTALL_DIR` environment variable to the correct directory.
 2. Compile the source code with CMake.
 
+## DLSS Integration
+
+This plugin supports NVIDIA DLSS, including DLSS Super Sampling (SR) and DLSS Ray Reconstruction (RR).
+
+### General Initialization and Cleanup
+
+Manage DLSS SDK lifecycle within your application or rendering module:
+*   Initialization: `DLSS_Init()`
+*   Cleanup: `DLSS_Shutdown()`
+
+These functions use a reference count. Ensure `DLSS_Init` calls are matched by `DLSS_Shutdown` calls.
+
+### Integrating DLSS Features (SR & RR)
+
+The core process for integrating DLSS features (both Super Sampling and Ray Reconstruction) involves these main steps. It's recommended to integrate and test SR before RR.
+
+1.  Check Availability:
+    *   For Super Sampling (SR): `DLSS_IsSuperSamplingAvailable()`
+    *   For Ray Reconstruction (RR): `DLSS_IsRayReconstructionAvailable()`
+
+2.  Parameter Allocation & Feature Creation: This is typically done when resolution or quality settings change.
+    *   Allocate DLSS parameters using `DLSS_AllocateParameters_D3D12()`. This can be shared between SR and RR.
+    *   Create the specific DLSS feature:
+        *   **SR:** Use `NGX_D3D12_CREATE_DLSS_EXT()`. Key settings in `NVSDK_NGX_DLSS_Create_Params` include input/output resolutions, performance quality mode, and feature flags.
+        *   **RR:** Use `NGX_D3D12_CREATE_DLSSD_EXT()`. Key settings in `NVSDK_NGX_DLSSD_Create_Params` include input/output resolutions (often the same for RR), quality mode, feature flags, G-Buffer roughness mode, and hardware depth usage.
+
+3.  Feature Evaluation (Per Frame): Execute the DLSS processing in each frame.
+    *   **SR:** Call `NGX_D3D12_EVALUATE_DLSS_EXT()`. Inputs via `NVSDK_NGX_D3D12_DLSS_Eval_Params` include the low-resolution color, depth, motion vectors, jitter, and sharpness. Outputs the upscaled image.
+    *   **RR:** Call `NGX_D3D12_EVALUATE_DLSSD_EXT()`. In addition to inputs similar to SR, `NVSDK_NGX_D3D12_DLSSD_Eval_Params` requires G-Buffer data (diffuse albedo, specular albedo, normals, roughness) and view/projection matrices.
+
+4.  Resource Management: Proper management of DLSS resources is crucial. Refer to the "Resource Management and Resolution Changes" section below for details on releasing and re-creating features upon resolution changes.
+
+### Resource Management and Resolution Changes
+
+*   Release Resources: When a feature is no longer needed or parameters change, release old resources:
+    *   `DLSS_DestroyFeature(CommandBuffer cmd, int dlssHandle)`
+    *   `DLSS_DestroyParameters_D3D12(IntPtr dlssParameters)`
+*   Handle Resolution Changes: On render/output size changes, re-allocate parameters and recreate features with new dimensions (release old ones first).
+
+### DLSS Best Practices & Key Considerations
+
+*   Prioritize SR then RR: Strongly recommended to integrate and validate DLSS Super Sampling with correct basic inputs (motion vectors, depth, jitter) before integrating DLSS Ray Reconstruction.
+*   Consult NVIDIA Official Documentation: For an in-depth understanding of parameters, flags, and best practices, always refer to the official DLSS documentation in the NVIDIA DLSS SDK. This guide is for a quick start.
+*   DLSS Logging: All messages from the DLSS SDK (errors and logs) might appear as standard Unity Log Info messages. Check the Unity console carefully when debugging DLSS issues.
+*   DLSS SDK Debug Tools: The NVIDIA DLSS SDK often includes debug tools (e.g., registry modification tools) that can be helpful. Refer to the DLSS SDK documentation.
+
 ## Best Practices
 
 NVIDIA OptiX Denoiser has built-in support for very dark and bright images. However, OIDN relies on the application side to provide a well-exposed image. If you use OIDN, make sure to pre-expose the input color image before denoising, and then apply the inverse pre-exposure to obtain the final result.
