@@ -264,6 +264,12 @@ public static NVSDK_NGX_Result DLSS_Parameter_SetD3d12Resource(IntPtr pParameter
     return NVSDK_NGX_Result.NVSDK_NGX_Result_Success;
 }
 
+public static NVSDK_NGX_Result DLSS_Parameter_SetD3d12RenderTexture(IntPtr pParameters, string paramName, RenderTexture value)
+{
+    IntPtr ptr = value ? value.GetNativeTexturePtr() : IntPtr.Zero;
+    return DLSS_Parameter_SetD3d12Resource(pParameters, paramName, ptr);
+}
+
 public static NVSDK_NGX_Result DLSS_Parameter_GetD3d12Resource(IntPtr pParameters, string paramName, out IntPtr value)
 {
     var result = Binding.DLSS_Parameter_GetD3d12Resource(pParameters, paramName, out value);
