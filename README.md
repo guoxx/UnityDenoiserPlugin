@@ -63,6 +63,7 @@ The core process for integrating DLSS features (both Super Sampling and Ray Reco
 *   Consult NVIDIA Official Documentation: For an in-depth understanding of parameters, flags, and best practices, always refer to the official DLSS documentation in the NVIDIA DLSS SDK. This guide is for a quick start.
 *   DLSS Logging: All messages from the DLSS SDK (errors and logs) might appear as standard Unity Log Info messages. Check the Unity console carefully when debugging DLSS issues.
 *   DLSS SDK Debug Tools: The NVIDIA DLSS SDK often includes debug tools (e.g., registry modification tools) that can be helpful. Refer to the DLSS SDK documentation.
+*   DLSS Development Libraries: The NVIDIA DLSS SDK offers two library versions—dev and rel. Use the dev version during development, then switch to the final rel version once all projects are verified.
 
 ## Best Practices
 
